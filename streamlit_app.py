@@ -1,53 +1,71 @@
 import streamlit as st
-from openai import OpenAI
+from PyPDF2 import PdfReader, PdfWriter
+from io import BytesIO
 
 # Show title and description.
-st.title("📄 Document question answering")
+st.title("📄 PDF Splitter")
 st.write(
-    "Upload a document below and ask a question about it – GPT will answer! "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
+    "Upload a PDF document, and this app will split it at the 'Judge's Instructions' section. "
+    "You'll get two downloadable PDFs: one with content before and another with content from the Judge's Instructions onward."
 )
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
-else:
+# Allow users to upload multiple PDF files.
+uploaded_files = st.file_uploader("Upload PDF files", type="pdf", accept_multiple_files=True)
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
+# Function to split PDF at "Judge's Instructions"
+def split_pdf(file):
+    reader = PdfReader(file)
+    num_pages = len(reader.pages)
+    before_instructions = PdfWriter()
+    after_instructions = PdfWriter()
+    
+    found_instructions = False
+    
+    # Loop through each page and split based on keyword
+    for i in range(num_pages):
+        page = reader.pages[i]
+        text = page.extract_text()
+        
+        if "JUDGE INSTRUCTIONS" in text and not found_instructions:
+            found_instructions = True
+        
+        # Add pages to respective PDF writer
+        if found_instructions:
+            after_instructions.add_page(page)
+        else:
+            before_instructions.add_page(page)
+    
+    # Save the split PDFs to BytesIO objects
+    before_output = BytesIO()
+    after_output = BytesIO()
+    before_instructions.write(before_output)
+    after_instructions.write(after_output)
+    
+    # Prepare BytesIO objects for download
+    before_output.seek(0)
+    after_output.seek(0)
+    
+    return before_output, after_output
 
-    # Let the user upload a file via `st.file_uploader`.
-    uploaded_file = st.file_uploader(
-        "Upload a document (.txt or .md)", type=("txt", "md")
-    )
-
-    # Ask the user for a question via `st.text_area`.
-    question = st.text_area(
-        "Now ask a question about the document!",
-        placeholder="Can you give me a short summary?",
-        disabled=not uploaded_file,
-    )
-
-    if uploaded_file and question:
-
-        # Process the uploaded file and question.
-        document = uploaded_file.read().decode()
-        messages = [
-            {
-                "role": "user",
-                "content": f"Here's a document: {document} \n\n---\n\n {question}",
-            }
-        ]
-
-        # Generate an answer using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            stream=True,
+# Process each uploaded file
+if uploaded_files:
+    for uploaded_file in uploaded_files:
+        file_name = uploaded_file.name.rsplit(".", 1)[0]  # Get filename without extension
+        
+        # Split the PDF
+        before_pdf, after_pdf = split_pdf(uploaded_file)
+        
+        # Create download buttons for each split PDF
+        st.download_button(
+            label=f"Download {file_name}-comp.pdf",
+            data=before_pdf,
+            file_name=f"{file_name}-comp.pdf",
+            mime="application/pdf"
         )
-
-        # Stream the response to the app using `st.write_stream`.
-        st.write_stream(stream)
+        
+        st.download_button(
+            label=f"Download {file_name}-judge.pdf",
+            data=after_pdf,
+            file_name=f"{file_name}-judge.pdf",
+            mime="application/pdf"
+        )
